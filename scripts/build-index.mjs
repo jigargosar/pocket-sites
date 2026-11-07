@@ -46,7 +46,7 @@ writeFileSync(`${ROOT}/index.html`, `<!doctype html>
 <body>
 <main>
   <h1>Pocket Sites</h1>
-  <p>${sites.length} single-file sites, newest first.</p>
+  <p>Small web toys, one file each.</p>
   <ul>
 ${rows}
   </ul>
