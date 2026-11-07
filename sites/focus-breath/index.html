@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus Breath</title>
+<script src="https://cdn.jsdelivr.net/npm/animejs@3.2.2/lib/anime.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/howler@2.2.4/dist/howler.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background-color: #10182b; color: #e9eefc; font-family: ui-sans-serif, system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 28px 20px; }
+  nav { display: flex; gap: 6px; background: rgba(255, 255, 255, .06); padding: 5px; border-radius: 999px; }
+  nav button { border: 0; background: none; color: #9aa6c8; font: inherit; font-size: 14px; padding: 9px 22px; border-radius: 999px; cursor: pointer; }
+  nav button.active { background: rgba(255, 255, 255, .14); color: #fff; }
+  .mute { position: fixed; top: 24px; right: 24px; border: 0; background: rgba(255, 255, 255, .06); color: #fff; width: 42px; height: 42px; border-radius: 50%; cursor: pointer; font-size: 18px; }
+  section { flex: 1; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 26px; width: 100%; }
+  section.show { display: flex; }
+  .stage { position: relative; width: min(70vw, 340px); aspect-ratio: 1; display: grid; place-items: center; }
+  #halo, #orb { position: absolute; inset: 0; border-radius: 50%; }
+  #halo { background: radial-gradient(circle, rgba(120, 200, 255, .25), transparent 70%); }
+  #orb { background: radial-gradient(circle at 35% 30%, #9fe7ff, #4d7cff 55%, #3a2f9e); box-shadow: 0 0 80px rgba(90, 150, 255, .5); }
+  .readout { position: relative; text-align: center; pointer-events: none; }
+  #phase { font-size: 22px; letter-spacing: .25em; text-transform: uppercase; font-weight: 300; }
+  #count { font-size: 56px; font-weight: 200; font-variant-numeric: tabular-nums; min-height: 68px; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  select, .btn { background: rgba(255, 255, 255, .08); color: #fff; border: 1px solid rgba(255, 255, 255, .12); border-radius: 12px; padding: 11px 18px; font: inherit; font-size: 14px; cursor: pointer; }
+  select option { background: #10182b; }
+  .btn.primary { background: #5b8cff; border-color: #5b8cff; }
+  .meta { color: #9aa6c8; font-size: 13px; letter-spacing: .05em; }
+  .ring-wrap { position: relative; width: min(75vw, 300px); aspect-ratio: 1; }
+  .ring-wrap svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring-bg { stroke: rgba(255, 255, 255, .08); }
+  #ring { stroke: #ff8f6b; stroke-linecap: round; transition: stroke-dashoffset .25s linear, stroke .4s; }
+  .ring-text { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  #clock { font-size: 64px; font-weight: 200; font-variant-numeric: tabular-nums; }
+  #modeLabel { font-size: 13px; letter-spacing: .25em; text-transform: uppercase; color: #9aa6c8; margin-top: 4px; }
+  .modes { display: flex; gap: 8px; }
+  .modes button { background: none; border: 1px solid rgba(255, 255, 255, .12); color: #9aa6c8; padding: 7px 14px; border-radius: 999px; font: inherit; font-size: 12px; cursor: pointer; }
+  .modes button.active { color: #fff; border-color: #ff8f6b; }
+</style>
+</head>
+<body>
+<nav>
+  <button data-tab="breathe" class="active">Breathe</button>
+  <button data-tab="focus">Focus</button>
+</nav>
+<button class="mute" id="mute" title="Sound on or off">🔔</button>
+
+<section id="breathe" class="show">
+  <div class="stage">
+    <div id="halo"></div>
+    <div id="orb"></div>
+    <div class="readout"><div id="phase">Ready</div><div id="count"></div></div>
+  </div>
+  <div class="controls">
+    <select id="pattern">
+      <option value="box">Box · 4 4 4 4</option>
+      <option value="relax">Relax · 4 7 8</option>
+      <option value="coherent">Coherent · 5 5</option>
+    </select>
+    <button class="btn primary" id="breathBtn">Start</button>
+  </div>
+  <div class="meta" id="cycles">0 cycles</div>
+</section>
+
+<section id="focus">
+  <div class="modes">
+    <button data-mode="focus" class="active">Focus 25</button>
+    <button data-mode="short">Break 5</button>
+    <button data-mode="long">Long break 15</button>
+  </div>
+  <div class="ring-wrap">
+    <svg viewBox="0 0 260 260">
+      <circle class="ring-bg" cx="130" cy="130" r="120" fill="none" stroke-width="10"/>
+      <circle id="ring" cx="130" cy="130" r="120" fill="none" stroke-width="10"/>
+    </svg>
+    <div class="ring-text"><div><div id="clock">25:00</div><div id="modeLabel">Focus</div></div></div>
+  </div>
+  <div class="controls">
+    <button class="btn primary" id="timerBtn">Start</button>
+    <button class="btn" id="resetBtn">Reset</button>
+  </div>
+  <div class="meta" id="sessions">0 focus sessions today</div>
+</section>
+
+<script>
+// Sounds are synthesised into WAV blobs, so the page needs no audio files.
+function chimeUrl(freqs, dur = 1.8) {
+  const rate = 44100;
+  const n = Math.floor(rate * dur);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const env = Math.min(1, t * 200) * Math.exp(-t * 3);
+    let s = 0;
+    freqs.forEach((f, k) => { s += Math.sin(2 * Math.PI * f * t) / (k + 1); });
+    v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, s * 0.35 * env)) * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+
+const sounds = {
+  inhale: new Howl({ src: [chimeUrl([660, 990, 1320])], format: ['wav'], volume: 0.5 }),
+  exhale: new Howl({ src: [chimeUrl([440, 660, 880])], format: ['wav'], volume: 0.5 }),
+  hold: new Howl({ src: [chimeUrl([550], 0.8)], format: ['wav'], volume: 0.25 }),
+  bell: new Howl({ src: [chimeUrl([523.25, 659.25, 783.99, 1046.5], 3)], format: ['wav'], volume: 0.7 }),
+};
+
+let muted = false;
+document.getElementById('mute').addEventListener('click', (e) => {
+  muted = !muted;
+  Howler.mute(muted);
+  e.currentTarget.textContent = muted ? '🔕' : '🔔';
+});
+
+// Tabs
+document.querySelectorAll('nav button').forEach((btn) => btn.addEventListener('click', () => {
+  document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('section').forEach((s) => s.classList.toggle('show', s.id === btn.dataset.tab));
+  anime({ targets: `#${btn.dataset.tab}`, opacity: [0, 1], translateY: [16, 0], duration: 500, easing: 'easeOutCubic' });
+}));
+
+// Breathing
+const PATTERNS = {
+  box: [['Inhale', 4, 1], ['Hold', 4, 1], ['Exhale', 4, 0.5], ['Hold', 4, 0.5]],
+  relax: [['Inhale', 4, 1], ['Hold', 7, 1], ['Exhale', 8, 0.5]],
+  coherent: [['Inhale', 5, 1], ['Exhale', 5, 0.5]],
+};
+const BG = { Inhale: '#132a45', Hold: '#161f3a', Exhale: '#10182b' };
+
+const phaseEl = document.getElementById('phase');
+const countEl = document.getElementById('count');
+const cyclesEl = document.getElementById('cycles');
+const breathBtn = document.getElementById('breathBtn');
+anime.set(['#orb', '#halo'], { scale: 0.5 });
+
+let run = 0;
+let breathing = false;
+
+function startBreath() {
+  const my = ++run;
+  const phases = PATTERNS[document.getElementById('pattern').value];
+  let idx = 0;
+  let cycles = 0;
+  cyclesEl.textContent = '0 cycles';
+
+  const step = () => {
+    if (my !== run) return;
+    const [label, secs, scale] = phases[idx];
+    phaseEl.textContent = label;
+    sounds[label === 'Inhale' ? 'inhale' : label === 'Exhale' ? 'exhale' : 'hold'].play();
+    anime({ targets: 'body', backgroundColor: BG[label], duration: 1200, easing: 'linear' });
+    anime({ targets: '#halo', scale: scale * 1.35, duration: secs * 1000, easing: 'easeInOutSine' });
+    anime({
+      targets: '#orb',
+      scale,
+      duration: secs * 1000,
+      easing: label === 'Hold' ? 'linear' : 'easeInOutSine',
+      update: (a) => { if (my === run) countEl.textContent = Math.max(1, Math.ceil(secs * (1 - a.progress / 100))); },
+      complete: () => {
+        idx = (idx + 1) % phases.length;
+        if (idx === 0) cyclesEl.textContent = `${++cycles} cycle${cycles === 1 ? '' : 's'}`;
+        step();
+      },
+    });
+  };
+  step();
+}
+
+function stopBreath() {
+  run++;
+  anime.remove(['#orb', '#halo', 'body']);
+  anime({ targets: ['#orb', '#halo'], scale: 0.5, duration: 800, easing: 'easeOutQuad' });
+  anime({ targets: 'body', backgroundColor: BG.Exhale, duration: 800, easing: 'linear' });
+  phaseEl.textContent = 'Ready';
+  countEl.textContent = '';
+}
+
+breathBtn.addEventListener('click', () => {
+  breathing = !breathing;
+  breathBtn.textContent = breathing ? 'Stop' : 'Start';
+  breathing ? startBreath() : stopBreath();
+});
+document.getElementById('pattern').addEventListener('change', () => { if (breathing) startBreath(); });
+
+// Pomodoro
+const MODES = { focus: [25 * 60, 'Focus', '#ff8f6b'], short: [5 * 60, 'Short break', '#6be3a4'], long: [15 * 60, 'Long break', '#7fb2ff'] };
+const ring = document.getElementById('ring');
+const C = 2 * Math.PI * 120;
+ring.style.strokeDasharray = C;
+
+let mode = 'focus';
+let remaining = MODES.focus[0];
+let timerId = null;
+let sessions = 0;
+const timerBtn = document.getElementById('timerBtn');
+
+function renderTimer() {
+  const mm = String(Math.floor(remaining / 60)).padStart(2, '0');
+  const ss = String(remaining % 60).padStart(2, '0');
+  document.getElementById('clock').textContent = `${mm}:${ss}`;
+  document.getElementById('modeLabel').textContent = MODES[mode][1];
+  ring.style.stroke = MODES[mode][2];
+  ring.style.strokeDashoffset = C * (1 - remaining / MODES[mode][0]);
+  document.title = timerId ? `${mm}:${ss} · ${MODES[mode][1]}` : 'Focus Breath';
+}
+
+function pauseTimer() {
+  clearInterval(timerId);
+  timerId = null;
+  timerBtn.textContent = 'Start';
+  renderTimer();
+}
+
+function setMode(m) {
+  pauseTimer();
+  mode = m;
+  remaining = MODES[m][0];
+  document.querySelectorAll('.modes button').forEach((b) => b.classList.toggle('active', b.dataset.mode === m));
+  renderTimer();
+  anime({ targets: '.ring-wrap', scale: [0.94, 1], duration: 600, easing: 'easeOutElastic(1, .6)' });
+}
+
+function startTimer() {
+  const end = Date.now() + remaining * 1000;
+  timerBtn.textContent = 'Pause';
+  timerId = setInterval(() => {
+    remaining = Math.max(0, Math.round((end - Date.now()) / 1000));
+    renderTimer();
+    if (remaining > 0) return;
+    sounds.bell.play();
+    if (mode === 'focus') {
+      sessions++;
+      document.getElementById('sessions').textContent = `${sessions} focus session${sessions === 1 ? '' : 's'} today`;
+      setMode(sessions % 4 === 0 ? 'long' : 'short');
+    } else {
+      setMode('focus');
+    }
+  }, 250);
+}
+
+timerBtn.addEventListener('click', () => (timerId ? pauseTimer() : startTimer()));
+document.getElementById('resetBtn').addEventListener('click', () => setMode(mode));
+document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+renderTimer();
+</script>
+</body>
+</html>

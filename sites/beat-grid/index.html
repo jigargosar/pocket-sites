@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beat Grid</title>
+<script src="https://cdn.jsdelivr.net/npm/tone@15.0.4/build/Tone.js"></script>
+<style>
+  :root { --bg: #0d0b14; --panel: #17141f; --line: #2a2536; --text: #ece8f5; --muted: #8d86a0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: radial-gradient(ellipse at top, #1c1530, var(--bg) 60%); color: var(--text); font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { display: grid; place-items: center; min-height: 100vh; padding: 24px; user-select: none; }
+  .wrap { width: min(1100px, 100%); }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 18px 28px; margin-bottom: 22px; }
+  h1 { margin: 0; font-size: 28px; letter-spacing: .04em; font-weight: 800; }
+  h1 span { color: #ff5d73; }
+  .play { width: 64px; height: 64px; border-radius: 50%; border: 0; background: #ff5d73; color: #fff; font-size: 24px; cursor: pointer; box-shadow: 0 0 30px rgba(255, 93, 115, .45); transition: transform .1s; }
+  .play:active { transform: scale(.94); }
+  .play.on { background: #06d6a0; box-shadow: 0 0 30px rgba(6, 214, 160, .45); }
+  label { display: flex; flex-direction: column; gap: 6px; font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: var(--muted); }
+  label b { color: var(--text); font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 150px; accent-color: #ff5d73; }
+  .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; cursor: pointer; font: inherit; font-size: 13px; }
+  .btn:hover { border-color: #4a4160; }
+  .spacer { flex: 1; }
+  .board { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 18px; display: grid; gap: 10px; }
+  .row { display: grid; grid-template-columns: 90px repeat(16, 1fr); gap: 6px; align-items: center; }
+  .label { background: none; border: 0; color: var(--c); font: inherit; font-weight: 700; font-size: 13px; text-align: left; letter-spacing: .08em; cursor: pointer; text-transform: uppercase; }
+  .cell { aspect-ratio: 1; border-radius: 8px; border: 0; background: #241f30; cursor: pointer; transition: background .08s, box-shadow .08s, transform .08s; }
+  .cell.beat { background: #2e2840; }
+  .cell.group { margin-left: 6px; }
+  .cell.on { background: var(--c); box-shadow: 0 0 14px color-mix(in srgb, var(--c) 60%, transparent); }
+  .cell.now { transform: scale(1.08); outline: 2px solid rgba(255, 255, 255, .55); }
+  .cell.on.now { box-shadow: 0 0 26px var(--c); }
+  footer { margin-top: 14px; color: var(--muted); font-size: 12px; letter-spacing: .05em; }
+  kbd { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+</style>
+<script>
+  // Tone objects stay outside Alpine so they never get wrapped in reactive proxies.
+  let synths = null;
+  let seq = null;
+
+  const BASS_NOTES = ['C2', 'C2', 'C3', 'C2', 'Eb2', 'C2', 'G2', 'C2', 'Bb1', 'C2', 'C3', 'Bb1', 'G1', 'G1', 'Bb1', 'C2'];
+
+  function makeSynths() {
+    const master = new Tone.Compressor(-18, 4).toDestination();
+    const reverb = new Tone.Reverb({ decay: 1.4, wet: 0.15 }).connect(master);
+
+    const kick = new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.1 } }).connect(master);
+
+    const snare = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.18, sustain: 0 } }).connect(reverb);
+    snare.volume.value = -8;
+
+    const hat = new Tone.MetalSynth({ envelope: { attack: 0.001, decay: 0.06, release: 0.01 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).connect(master);
+    hat.volume.value = -22;
+
+    const clapFilter = new Tone.Filter(1400, 'bandpass').connect(reverb);
+    const clap = new Tone.NoiseSynth({ noise: { type: 'pink' }, envelope: { attack: 0.005, decay: 0.12, sustain: 0 } }).connect(clapFilter);
+    clap.volume.value = -2;
+
+    const bass = new Tone.MonoSynth({
+      oscillator: { type: 'sawtooth' },
+      filter: { Q: 3, type: 'lowpass' },
+      envelope: { attack: 0.005, decay: 0.2, sustain: 0.3, release: 0.2 },
+      filterEnvelope: { attack: 0.005, decay: 0.18, sustain: 0.1, baseFrequency: 120, octaves: 3.5 },
+    }).connect(master);
+    bass.volume.value = -10;
+
+    return [
+      (time) => kick.triggerAttackRelease('C1', '8n', time),
+      (time) => snare.triggerAttackRelease('16n', time),
+      (time) => hat.triggerAttackRelease(250, '32n', time),
+      (time) => clap.triggerAttackRelease('16n', time),
+      (time, i) => bass.triggerAttackRelease(BASS_NOTES[i], '16n', time),
+    ];
+  }
+
+  function beatGrid() {
+    const pattern = (s) => s.split('').map((c) => c === 'x');
+    return {
+      tracks: [
+        { name: 'Kick', color: '#ff5d73', steps: pattern('x...x...x...x..x') },
+        { name: 'Snare', color: '#ffd166', steps: pattern('....x.......x...') },
+        { name: 'Hat', color: '#06d6a0', steps: pattern('..x...x...x...xx') },
+        { name: 'Clap', color: '#4cc9f0', steps: pattern('............x..x') },
+        { name: 'Bass', color: '#b388ff', steps: pattern('x..x..x...x..x..') },
+      ],
+      bpm: 112,
+      swing: 10,
+      playing: false,
+      step: -1,
+      painting: false,
+      paintValue: true,
+
+      init() {
+        this.$watch('bpm', (v) => { Tone.getTransport().bpm.value = +v; });
+        this.$watch('swing', (v) => { Tone.getTransport().swing = v / 100; });
+      },
+
+      async ensureAudio() {
+        await Tone.start();
+        if (synths) return;
+        synths = makeSynths();
+        const transport = Tone.getTransport();
+        transport.bpm.value = +this.bpm;
+        transport.swingSubdivision = '16n';
+        transport.swing = this.swing / 100;
+        seq = new Tone.Sequence((time, i) => {
+          this.tracks.forEach((track, t) => { if (track.steps[i]) synths[t](time, i); });
+          Tone.getDraw().schedule(() => { this.step = i; }, time);
+        }, [...Array(16).keys()], '16n').start(0);
+      },
+
+      async toggle() {
+        await this.ensureAudio();
+        const transport = Tone.getTransport();
+        if (this.playing) {
+          transport.stop();
+          this.playing = false;
+          this.step = -1;
+        } else {
+          transport.start();
+          this.playing = true;
+        }
+      },
+
+      async preview(t) {
+        await this.ensureAudio();
+        synths[t](Tone.now(), Math.max(this.step, 0));
+      },
+
+      startPaint(t, i) {
+        this.painting = true;
+        this.paintValue = !this.tracks[t].steps[i];
+        this.tracks[t].steps[i] = this.paintValue;
+        if (this.paintValue && !this.playing) this.preview(t);
+      },
+
+      paint(t, i) {
+        if (this.painting) this.tracks[t].steps[i] = this.paintValue;
+      },
+
+      randomize() {
+        const odds = [0.2, 0.12, 0.55, 0.1, 0.35];
+        this.tracks.forEach((track, t) => {
+          track.steps = track.steps.map((_, i) => {
+            if (t === 0 && i % 8 === 0) return true;
+            if (t === 1 && (i === 4 || i === 12)) return true;
+            return Math.random() < odds[t];
+          });
+        });
+      },
+
+      clear() {
+        this.tracks.forEach((track) => { track.steps = track.steps.map(() => false); });
+      },
+    };
+  }
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+</head>
+<body x-data="beatGrid()" @keydown.space.window.prevent="toggle()" @pointerup.window="painting = false">
+<div class="wrap">
+  <header>
+    <button class="play" :class="{ on: playing }" @click="toggle()" x-text="playing ? '■' : '▶'"></button>
+    <h1>Beat<span>Grid</span></h1>
+    <label>Tempo <b x-text="bpm + ' bpm'"></b><input type="range" min="60" max="180" x-model.number="bpm"></label>
+    <label>Swing <b x-text="swing + '%'"></b><input type="range" min="0" max="60" x-model.number="swing"></label>
+    <div class="spacer"></div>
+    <button class="btn" @click="randomize()">🎲 Randomize</button>
+    <button class="btn" @click="clear()">Clear</button>
+  </header>
+
+  <div class="board">
+    <template x-for="(track, t) in tracks" :key="track.name">
+      <div class="row">
+        <button class="label" :style="`--c:${track.color}`" @click="preview(t)" x-text="track.name"></button>
+        <template x-for="(on, i) in track.steps" :key="i">
+          <button class="cell"
+            :class="{ on, now: playing && step === i, beat: i % 4 === 0, group: i % 4 === 0 && i > 0 }"
+            :style="`--c:${track.color}`"
+            @pointerdown.prevent="startPaint(t, i)"
+            @pointerenter="paint(t, i)"></button>
+        </template>
+      </div>
+    </template>
+  </div>
+
+  <footer>Click or drag across cells to paint. Click a track name to hear it. <kbd>Space</kbd> plays and stops.</footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Poster Forge</title>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.11.1/lib/p5.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1a1d; font-family: ui-sans-serif, system-ui, sans-serif; }
+  body { display: flex; align-items: center; justify-content: center; gap: 32px; padding: 24px; box-sizing: border-box; flex-wrap: wrap; }
+  #stage canvas { height: min(90vh, 840px) !important; width: auto !important; display: block; box-shadow: 0 30px 80px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .05); }
+  #panel { width: 280px; }
+  #help { color: #77777f; font-size: 12px; line-height: 1.6; margin-top: 14px; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div>
+  <div id="panel"></div>
+  <div id="help">Every seed makes a new poster.<br>Same seed and settings, same poster.</div>
+</div>
+
+<script type="module">
+import { Pane } from 'https://cdn.jsdelivr.net/npm/tweakpane@4.0.5/dist/tweakpane.min.js';
+
+// Last colour in each palette is the ink used for the title.
+const PALETTES = {
+  Sunset: ['#f3ead8', '#e63946', '#f4a261', '#2a9d8f', '#1d3557'],
+  Bauhaus: ['#efe9dc', '#d62828', '#f7b801', '#1b4f9c', '#111111'],
+  Mint: ['#e8f3ee', '#2ec4b6', '#ff9f1c', '#9ad9d2', '#0b3d3a'],
+  Noir: ['#111111', '#f5f5f5', '#e63946', '#8d99ae', '#f1faee'],
+  Ocean: ['#0b1d33', '#00a6fb', '#0582ca', '#f8c537', '#e8f1f2'],
+};
+
+const params = {
+  style: 'bauhaus',
+  palette: 'Bauhaus',
+  seed: 42,
+  density: 7,
+  grain: 0.3,
+  title: 'Poster Forge',
+  subtitle: 'generative series',
+};
+
+function shuffled(p, arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(p.random(i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const STYLES = {
+  bauhaus(p, pal, x0, y0, w, h) {
+    const cols = params.density;
+    const size = w / cols;
+    const rows = Math.ceil(h / size);
+    p.noStroke();
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = x0 + c * size;
+        const y = y0 + r * size;
+        const [bg, fg, accent] = shuffled(p, pal.slice(1));
+        p.fill(bg);
+        p.rect(x, y, size + 0.5, size + 0.5);
+        p.push();
+        p.translate(x + size / 2, y + size / 2);
+        p.rotate(Math.floor(p.random(4)) * p.HALF_PI);
+        p.fill(fg);
+        const kind = Math.floor(p.random(6));
+        if (kind === 0) p.circle(0, 0, size * 0.8);
+        else if (kind === 1) p.arc(-size / 2, -size / 2, size * 2, size * 2, 0, p.HALF_PI, p.PIE);
+        else if (kind === 2) p.arc(0, -size / 2, size, size, 0, p.PI, p.PIE);
+        else if (kind === 3) p.triangle(-size / 2, -size / 2, size / 2, -size / 2, -size / 2, size / 2);
+        else if (kind === 4) for (let s = 0; s < 4; s++) p.rect(-size / 2, -size / 2 + s * size / 4, size, size / 8);
+        else {
+          p.circle(0, 0, size * 0.8);
+          p.fill(accent);
+          p.circle(0, 0, size * 0.38);
+        }
+        p.pop();
+      }
+    }
+  },
+
+  flow(p, pal, x0, y0, w, h) {
+    const lines = params.density * 140;
+    const scale = 0.0035;
+    p.noFill();
+    for (let i = 0; i < lines; i++) {
+      let x = x0 + p.random(w);
+      let y = y0 + p.random(h);
+      const col = p.color(p.random(pal.slice(1)));
+      col.setAlpha(180);
+      p.stroke(col);
+      p.strokeWeight(p.random(0.6, 2.6));
+      p.beginShape();
+      for (let s = 0; s < 70; s++) {
+        p.vertex(x, y);
+        const a = p.noise(x * scale, y * scale) * p.TWO_PI * 2;
+        x += Math.cos(a) * 3;
+        y += Math.sin(a) * 3;
+      }
+      p.endShape();
+    }
+  },
+
+  rings(p, pal, x0, y0, w, h) {
+    const centers = Math.floor(p.random(2, 5));
+    p.noFill();
+    for (let c = 0; c < centers; c++) {
+      const cx = x0 + p.random(w);
+      const cy = y0 + p.random(h);
+      const maxR = p.random(w * 0.3, w * 0.85);
+      const step = maxR / (params.density * 1.6);
+      for (let r = maxR; r > 0; r -= step) {
+        p.stroke(p.random(pal.slice(1)));
+        p.strokeWeight(step * p.random(0.3, 0.75));
+        p.circle(cx, cy, r * 2);
+      }
+    }
+  },
+};
+
+const sketch = new p5((p) => {
+  p.setup = () => {
+    p.pixelDensity(2);
+    p.createCanvas(600, 840).parent('stage');
+    p.noLoop();
+  };
+
+  p.draw = () => {
+    p.randomSeed(params.seed);
+    p.noiseSeed(params.seed);
+    const pal = PALETTES[params.palette];
+    const ink = pal[pal.length - 1];
+    const m = 40;
+    const x0 = m, y0 = m, w = p.width - 2 * m, h = p.height - 2 * m - 130;
+
+    p.background(pal[0]);
+
+    const ctx = p.drawingContext;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0, w, h);
+    ctx.clip();
+    STYLES[params.style](p, pal, x0, y0, w, h);
+    ctx.restore();
+
+    p.noStroke();
+    p.fill(ink);
+    p.textFont('Helvetica Neue, Helvetica, Arial, sans-serif');
+    p.textStyle(p.BOLD);
+    p.textAlign(p.LEFT, p.BASELINE);
+    let size = 52;
+    p.textSize(size);
+    const title = params.title.toUpperCase();
+    while (p.textWidth(title) > w && size > 12) p.textSize(--size);
+    p.text(title, x0, p.height - m - 56);
+
+    p.textStyle(p.NORMAL);
+    p.textSize(13);
+    p.text(params.subtitle, x0, p.height - m - 26);
+    p.textAlign(p.RIGHT, p.BASELINE);
+    p.text(`no. ${String(params.seed).padStart(4, '0')}`, x0 + w, p.height - m - 26);
+
+    p.strokeWeight(1);
+    const grains = params.grain * 40000;
+    for (let i = 0; i < grains; i++) {
+      p.stroke(p.random() < 0.5 ? 0 : 255, 24);
+      p.point(p.random(p.width), p.random(p.height));
+    }
+  };
+});
+
+const pane = new Pane({ title: 'Poster Forge', container: document.getElementById('panel') });
+pane.addBinding(params, 'style', { options: { Bauhaus: 'bauhaus', Flow: 'flow', Rings: 'rings' } });
+pane.addBinding(params, 'palette', { options: Object.fromEntries(Object.keys(PALETTES).map((k) => [k, k])) });
+pane.addBinding(params, 'seed', { min: 1, max: 9999, step: 1 });
+pane.addBinding(params, 'density', { min: 3, max: 14, step: 1 });
+pane.addBinding(params, 'grain', { min: 0, max: 1, step: 0.01 });
+pane.addBinding(params, 'title');
+pane.addBinding(params, 'subtitle');
+pane.addBlade({ view: 'separator' });
+pane.addButton({ title: '🎲 New seed' }).on('click', () => {
+  params.seed = Math.floor(Math.random() * 9999) + 1;
+  pane.refresh();
+  sketch.redraw();
+});
+pane.addButton({ title: '⬇ Export PNG' }).on('click', () => sketch.saveCanvas(`poster-${params.seed}`, 'png'));
+pane.on('change', () => sketch.redraw());
+</script>
+</body>
+</html>
