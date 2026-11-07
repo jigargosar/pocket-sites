@@ -28,6 +28,3 @@ elm-stuff
 
 # Generated at deploy time by scripts/build-index.mjs
 sites/index.html
-
-# Generated at deploy time by scripts/screenshot.mjs
-sites/*/preview.jpg
