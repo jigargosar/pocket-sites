@@ -1,0 +1,13 @@
+{
+  "name": "pocket-sites",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/build.mjs && serve sites"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.0",
+    "serve": "14.2.6"
+  }
+}

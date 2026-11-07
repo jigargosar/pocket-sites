@@ -1,15 +1,32 @@
-// Generates sites/index.html: a card for every site, newest first.
+// One build, run both locally (pnpm preview) and in CI (pnpm build):
+// 1. Captures sites/<name>/preview.jpg for every site, using the system Edge.
+// 2. Writes sites/index.html: a card per site, newest first.
+// Each site needs a <title> and a <meta name="description">.
 // A site's date is the commit that first added its index.html (renames are followed).
-// Each site must have a <title> and a <meta name="description">.
-// Screenshots come from scripts/screenshot.mjs as sites/<name>/preview.jpg.
+import { chromium } from 'playwright-core';
 import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { extname, join, normalize } from 'node:path';
 
 const ROOT = 'sites';
+const SETTLE_MS = 5000;
+const TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript',
+  '.mjs': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+};
+
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const unesc = (s) => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 
-function read(name) {
+function readSite(name) {
   const file = `${ROOT}/${name}/index.html`;
   const html = readFileSync(file, 'utf8');
   const title = html.match(/<title>([^<]*)<\/title>/i)?.[1].trim();
@@ -27,15 +44,39 @@ function read(name) {
   return { name, title: unesc(title), description: unesc(description), added: new Date(added) };
 }
 
-const sites = readdirSync(ROOT, { withFileTypes: true })
-  .filter((d) => d.isDirectory() && existsSync(`${ROOT}/${d.name}/index.html`))
-  .map((d) => read(d.name))
-  .sort((a, b) => b.added - a.added || a.name.localeCompare(b.name));
+async function captureScreenshots(names) {
+  const server = createServer(async (req, res) => {
+    let path = normalize(decodeURIComponent(new URL(req.url, 'http://local').pathname));
+    if (path.endsWith('/') || path.endsWith('\\')) path = join(path, 'index.html');
+    const file = join(ROOT, path);
+    if (!existsSync(file)) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(await readFile(file));
+  });
+  await new Promise((resolve) => server.listen(0, resolve));
+  const { port } = server.address();
 
-const fmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  // SwiftShader gives headless Edge software WebGL, needed by the 3D sites.
+  const browser = await chromium.launch({ channel: 'msedge', args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  for (const name of names) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.goto(`http://localhost:${port}/${name}/`, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForTimeout(SETTLE_MS);
+    await page.screenshot({ path: `${ROOT}/${name}/preview.jpg`, type: 'jpeg', quality: 80 });
+    await page.close();
+    console.log(`captured ${name}`);
+  }
+  await browser.close();
+  server.close();
+}
 
-const cards = sites
-  .map((s) => `    <a class="card" href="./${esc(s.name)}/">
+function writeIndex(sites) {
+  const fmt = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const cards = sites
+    .map((s) => `    <a class="card" href="./${esc(s.name)}/">
       <img src="./${esc(s.name)}/preview.jpg" alt="Screenshot of ${esc(s.title)}" loading="lazy" width="1280" height="800">
       <div class="body">
         <h2>${esc(s.title)}</h2>
@@ -43,9 +84,9 @@ const cards = sites
         <time datetime="${s.added.toISOString()}">${fmt(s.added)}</time>
       </div>
     </a>`)
-  .join('\n');
+    .join('\n');
 
-writeFileSync(`${ROOT}/index.html`, `<!doctype html>
+  writeFileSync(`${ROOT}/index.html`, `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -82,4 +123,13 @@ ${cards}
 </body>
 </html>
 `);
-console.log(`wrote ${ROOT}/index.html with ${sites.length} sites`);
+  console.log(`wrote ${ROOT}/index.html with ${sites.length} sites`);
+}
+
+const sites = readdirSync(ROOT, { withFileTypes: true })
+  .filter((d) => d.isDirectory() && existsSync(`${ROOT}/${d.name}/index.html`))
+  .map((d) => readSite(d.name))
+  .sort((a, b) => b.added - a.added || a.name.localeCompare(b.name));
+
+await captureScreenshots(sites.map((s) => s.name));
+writeIndex(sites);

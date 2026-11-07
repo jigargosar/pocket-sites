@@ -16,7 +16,8 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    # Pinned: Edge is verified preinstalled on the Ubuntu 24.04 runner image.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
       name: github-pages
@@ -25,12 +26,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Install Playwright with Chromium
-        run: npm install --no-save playwright && npx playwright install --with-deps chromium
-      - name: Capture a screenshot of every site
-        run: node scripts/screenshot.mjs
-      - name: Build index page, newest first
-        run: node scripts/build-index.mjs
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.14.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Screenshots and index page
+        run: pnpm build
       - uses: actions/configure-pages@v5
       - name: Upload every folder in sites/
         uses: actions/upload-pages-artifact@v3
