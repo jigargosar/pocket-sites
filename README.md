@@ -42,7 +42,8 @@ No list needs updating. The order of folders does not matter.
 ## View locally
 
 ```sh
+node scripts/build-index.mjs
 pnpx serve sites
 ```
 
-Then open `http://localhost:3000/<folder-name>/`.
+Then open `http://localhost:3000/` for the index, or `http://localhost:3000/<folder-name>/` for one site.
